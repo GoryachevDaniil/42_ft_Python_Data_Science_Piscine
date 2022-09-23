@@ -1,32 +1,22 @@
 import os
 import sys
 import datetime as dt
-import functools
-import collections
-from collections import Counter
-# from bs4 import BeautifulSoup
+# import functools
+from functools import reduce
+# import collections
+from collections import Counter, defaultdict
 import urllib
 import json
-# import requests
 import re
-# import pytest
 
 class Movies:
-    """
-    Analyzing data from movies.csv
-    """
     def __init__(self, path_to_the_file: str):
         self.filename = path_to_the_file
-        # self.movies_csv_headers = ('movieId','title','genres')
-        # self.movies_csv_types = (int, str, str)
+        self.titles = {}
+        for data in self.read_file():
+            self.titles[data[0]] = data[1]
 
     def dist_by_release(self):
-        """
-        The method returns a dict or an OrderedDict where the 
-        keys are years and the values are counts. 
-        You need to extract years from the titles. Sort it by 
-        counts descendingly.
-        """
         all_lines = self.read_file()
         del all_lines[0]        
         
@@ -50,11 +40,6 @@ class Movies:
         return dict(result.most_common())
     
     def dist_by_genres(self):
-        """
-        The method returns a dict where the keys 
-        are genres and the values are counts.
-        Sort it by counts descendingly.
-        """
         all_lines = self.read_file()
         del all_lines[0]
 
@@ -70,12 +55,6 @@ class Movies:
         return dict(result.most_common())
         
     def most_genres(self, n):
-        """
-        The method returns a dict with top-n movies 
-        where the keys are movie titles and 
-        the values are the number of genres of the 
-        movie. Sort it by numbers descendingly.
-        """
         all_lines = self.read_file()
         del all_lines[0]
 
@@ -86,6 +65,9 @@ class Movies:
 
         return dict(sorted(result.items(), \
                         key=lambda x: x[1], reverse=True)[:n])
+    
+    def get_title(self, movie_id):
+        return self.titles.get(movie_id)
 
     def read_file(self):
         with open(self.filename, "r", encoding='utf-8') as f:
@@ -102,18 +84,44 @@ class Movies:
 
         return all_lines
 
-class Ratings:
-    """
-    Analyzing data from ratings.csv
-    """
-    # ratings_headers = ('userId','movieId','rating','timestamp')
-    # ratings_separator = ','
-    # ratings_types = (int, int, float, int)
 
+class Statistics:
+    @staticmethod
+    def average(values: list):
+        return sum(values) / len(values)
+
+
+    @staticmethod
+    def median(values: list):
+        if len(values) == 0:
+            raise ValueError('List is empty.')
+
+        if len(values) == 1:
+            return float(values[0])
+
+        values = sorted(values)
+        mid = int(len(values) / 2)
+        
+        if len(values) % 2:
+            return float(values[mid])
+        
+        return (values[mid - 1] + values[mid]) / 2.0
+
+    @classmethod
+    def variance(cls, values: list):
+        mean = cls.average(values)
+
+        def reduce_func(prev, curr):
+            diff = curr - mean
+            return prev + diff * diff
+        
+        squares_sum = reduce(reduce_func, values)
+
+        return squares_sum / len(values)
+
+
+class Ratings:
     def __init__(self, path_to_the_file: str):
-        """
-        Put here any fields that you think you will need.
-        """
         self.filename = path_to_the_file
 
 
@@ -131,96 +139,196 @@ class Ratings:
     class Movies:    
         def __init__(self, ratings_cls, movies_cls: Movies):
             if not isinstance(ratings_cls, Ratings) or not isinstance(movies_cls, Movies):
-                raise ValueError('invalid Movies class object')
+                raise ValueError('invalid class object')
             self.ratings = ratings_cls
             self.movies_cls = movies_cls
 
         def dist_by_year(self):
-            """
-            The method returns a dict where the keys 
-            are years and the values are counts. 
-            Sort it by years ascendingly. You need 
-            to extract years from timestamps.
-            """
             result = Counter()
             tmp = self.ratings.read_file()
             for i in range(1, len(tmp)):
                 year = dt.datetime.fromtimestamp(int(tmp[i][3])).year
                 result[year] += 1
 
-            return dict(sorted(result.items()))
+            ratings_by_year = dict(sorted(result.items()))
 
+            return ratings_by_year
 
-        # def NEXT_METHOD():      <---
+        def dist_by_rating(self):
+            result = Counter()
+            tmp = self.ratings.read_file()
 
+            for i in range(1, len(tmp)):
+                rat = tmp[i][2]
+                result[rat] += 1
+
+            ratings_distribution = dict(sorted(result.items()))
+
+            return ratings_distribution
+        
+        def top_by_num_of_ratings(self, top_size: int):
+            result = Counter()
+
+            tmp = self.ratings.read_file()
+
+            for i in range(1, len(tmp)):
+                result[self.movies_cls.get_title(tmp[i][1])] += 1
+
+            top_movies = dict(result.most_common(top_size))
+
+            return top_movies
+        
+        def top_by_ratings(self, n, metric=Statistics.average):
+            all_movies = defaultdict(list)
+
+            tmp = self.ratings.read_file()
+            del tmp[0]
+
+            for data in tmp:
+                all_movies[self.movies_cls.get_title(data[1])].append(float(data[2]))
+
+            for movie in all_movies:
+                all_movies[movie] = round(metric(all_movies[movie]), 2)
+
+            top_movies = dict(sorted(all_movies.items(), key=lambda item: item[1], reverse=True)[:n])
+
+            return top_movies
+        
+        def top_controversial(self, n):
+            all_movies = defaultdict(list)
+
+            tmp = self.ratings.read_file()
+            del tmp[0]
+
+            for data in tmp:
+                all_movies[self.movies_cls.get_title(data[1])].append(float(data[2]))
+
+            for movie in all_movies:
+                all_movies[movie] = round(Statistics.variance(all_movies[movie]), 2)
+
+            top_movies = dict(sorted(all_movies.items(), key=lambda item: item[1], reverse=True)[:n])
+
+            return top_movies
+
+    class Users(Movies):
+        def dist_by_ratings_number(self):
+            ratings_distribution = Counter()
+
+            tmp = self.ratings.read_file()
+            del tmp[0]
+
+            for data in tmp:
+                ratings_distribution[data[0]] += 1
+
+            ratings_distribution = dict(sorted(ratings_distribution.items(), key=lambda item: item[1]))
+
+            return ratings_distribution
+
+        def dist_by_ratings_values(self, metric=Statistics.average):
+            all_ratings = defaultdict(list)
+
+            tmp = self.ratings.read_file()
+            del tmp[0]
+
+            for data in tmp:
+                all_ratings[data[0]].append(float(data[2]))
+
+            for user in all_ratings:
+                all_ratings[user] = round(metric(all_ratings[user]), 2)
+
+            all_ratings = dict(sorted(all_ratings.items(), key=lambda item: item[1]))
+
+            return all_ratings
+
+        def top_by_variance(self, n: int):
+            all_ratings = defaultdict(list)
+
+            tmp = self.ratings.read_file()
+            del tmp[0]
+
+            for data in tmp:
+                all_ratings[data[1]].append(float(data[2]))
+
+            for user in all_ratings:
+                all_ratings[user] = round(Statistics.variance(all_ratings[user]), 2)
+
+            all_ratings = dict(sorted(all_ratings.items(), key=lambda item: item[1], reverse=True)[:n])
+            
+            return all_ratings
+
+class TestMovies:
+    @classmethod
+    def setup_class(cls):
+        cls.mov = Movies('data/movies.csv')
+
+    def test_dist_by_release(self):
+        print(self.dist_by_release())
+    
+    def test_dist_by_genres(self):
+        print(self.dist_by_release())
+
+    def test_most_genres(self, n):
+        print(self.most_genres())
 
 
 class TestRatings:
-    """Tests for Ratings class
-    """
     @classmethod
     def setup_class(cls):
         cls.ratings = Ratings('data/ratings.csv')
-        cls.mov = Movies('data/movies.csv')
-        cls.ratings_movies = Ratings.Movies(cls.ratings, cls.mov)
-        # cls.ratings_users = Ratings.Users(cls.ratings, cls.mov) ## make Users
+        cls.movies = Movies('data/movies.csv')
+        cls.ratings_movies = Ratings.Movies(cls.ratings, cls.movies)
+        cls.ratings_users = Ratings.Users(cls.ratings, cls.movies)
 
-    def test__movies__dist_by_years__types(self):
-        """Test are dist_by_years method result types correct
-        # """
-        result = self.ratings_movies.dist_by_year()
-        print(result)
+    def test_movies_dist_by_years(self):
+        print(self.ratings_movies.dist_by_year())
 
+    def test_movies_dist_by_rating(self):
+        print(self.ratings_movies.dist_by_rating())
 
-def main():
-    mov = Movies('data/movies.csv')
+    def test_top_by_num_of_ratings(self, n):
+        print(self.ratings_movies.top_by_num_of_ratings(n))
+
+    def test_top_by_ratings(self, n):
+        print(self.ratings_movies.top_by_ratings(n))
+
+    def test_top_controversial(self, n):
+        print(self.ratings_movies.top_controversial(n))
+
+    def test_dist_by_ratings_number(self):
+        print(self.ratings_users.dist_by_ratings_number())
+    
+    def test_dist_by_ratings_values(self):
+        print(self.ratings_users.dist_by_ratings_values())
+    
+    def test_top_by_variance(self, n):
+        print(self.ratings_users.top_by_variance(n))
+
+def ratingsTest():
     rat = Ratings('data/ratings.csv')
 
-    testRat = TestRatings()
-    testRat.setup_class()
-    testRat.test__movies__dist_by_years__types()
+    # testRatings = TestRatings()
+    # testRatings.setup_class()
+    # testRatings.test_movies_dist_by_years()
+    # testRatings.test_movies_dist_by_rating()
+    # testRatings.test_top_by_num_of_ratings(5)
+    # testRatings.test_top_by_ratings(5)
+    # testRatings.test_top_controversial(5)
+    # testRatings.test_dist_by_ratings_number()
+    # testRatings.test_dist_by_ratings_values()
+    # testRatings.test_top_by_variance(5)
+
+def moviesTest():
+    mov = Movies('data/movies.csv')
+
+    # testMovies = TestMovies()
+    # testMovies.setup_class()
+    # testMovies.test_dist_by_release()
+    # testMovies.test_dist_by_genres()
+    # testMovies.test_most_genres(5)
+
+def main():
+    moviesTest()
+    ratingsTest()
 
 if __name__ == '__main__':
     main()
-
-
-
-
-#############################################
-############### CHERNOVIK ###################
-#############################################
-
-# def main():
-#     mov = Movies('data/movies.csv')
-    
-#     test_1 = mov.dist_by_release()
-#     # print(test_1)
-
-#     test_2 = mov.dist_by_genres()
-#     # print(test_2)
-
-#     test_3 = mov.most_genres(10)
-#     # print(test_3)
-
-#     rats = Ratings('data/movies.csv')
-#     # mov = Movies('data/movies.csv')
-#     rats_movies = Ratings.Movies(rats, mov)
-#     # rats_users = Ratings.Users(rats, mov)
-
-
-#     rats_movies.dist_by_year(rats, mov)
-
-#     # rat = Ratings('data/ratings.csv')
-#     # tmp = rat.read_file()
-#     # print(tmp[1])
-
-
-
-#     test_4 = rat.dist_by_year(rat, mov)
-#     print(test_4)
-
-
-
-
-# if __name__ == '__main__':
-#     main()
